@@ -6,7 +6,7 @@ set -euo pipefail
 : "${PADAVAN_BRANCH:=master}"
 : "${PADAVAN_CONTAINERFILE:=${PADAVAN_REPO%.git}/raw/$PADAVAN_BRANCH/Dockerfile}"
 : "${PADAVAN_TOOLCHAIN_URL:=https://gitlab.com/api/v4/projects/hadzhioglu%2Fpadavan-ng/packages/generic/toolchain/latest/toolchain.tzst}"
-: "${PADAVAN_IMAGE:=registry.gitlab.com/lunatik-cyber/padavan-ng"
+: "${PADAVAN_IMAGE:=registry.gitlab.com/lunatik-cyber/padavan-ng}"
 : "${PADAVAN_BUILDER_CONFIG:=${XDG_CONFIG_HOME:-$HOME/.config}/padavan-builder}"
 : "${PADAVAN_BUILD_ALL_LOCALLY:=}"
 : "${PADAVAN_BUILD_CONTAINER:=}"
