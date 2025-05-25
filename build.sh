@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# Initialize sudo variable early so it's available to all functions
+(( $(id -u) > 0 )) && sudo="sudo" || sudo=""
+
 : "${PADAVAN_REPO:=https://gitlab.com/Lunatik-cyber/padavan-ng.git}"
 : "${PADAVAN_BRANCH:=master}"
 : "${PADAVAN_CONTAINERFILE:=${PADAVAN_REPO%.git}/raw/$PADAVAN_BRANCH/Dockerfile}"
@@ -27,7 +30,6 @@ mnt="$tmp_dir/mnt"
 log_file="$tmp_dir/$container.log"
 
 # text decoration utilities
-# shellcheck disable=SC2015
 {
   normal=$(tput sgr0 ||:)
   bold=$(tput bold ||:)
@@ -54,7 +56,6 @@ log() {
 
 confirm() {
   while echo; do
-    # `< /dev/tty` is required to be able to run via pipe: cat x.sh | bash
     read -rp "$* [ + or - ]: " confirmation < /dev/tty || { echo "No tty"; exit 1; }
     case "$confirmation" in
       "+") return 0 ;;
@@ -120,33 +121,26 @@ satisfy_dependencies() {
     ID=""
     ID_LIKE=""
 
-    # shellcheck source=/etc/os-release
     [[ -f /etc/os-release ]] && . <(grep "^ID" /etc/os-release)
 
     case "$ID $ID_LIKE" in
       *alpine*)
         $sudo apk add --no-cache --no-interactive "${deps[@]}" &>> "$log_file" ;;
-
       *arch*)
         $sudo pacman -Syu --noconfirm "${deps[@]}" &>> "$log_file" ;;
-
       *debian*|*ubuntu*)
         $sudo apt update &>> "$log_file"
         $sudo apt install -y "${deps[@]}" &>> "$log_file" ;;
-
       *fedora*|*rhel*)
         $sudo dnf install -y "${deps[@]}" &>> "$log_file" ;;
-
       *suse*)
         deps=("${deps[@]/btrfs-progs/btrfsprogs}")
         deps=("${deps[@]/micro/micro-editor}")
         $sudo zypper --non-interactive install "${deps[@]}" &>> "$log_file" ;;
-
       *)
         log warn "Unknown OS, can't install dependencies"
         _echo     " Please install these packages manually:"
         _echo     " ${deps[*]}"
-
         confirm " Continue anyway (+) or exit (-)?" || exit 1
         ;;
     esac
@@ -181,7 +175,6 @@ prepare() {
     $sudo ip link set "$wan" mtu 1280
   fi
 
-  # if private, podman mounts don't use regular mounts and write to underlying dir instead
   if [[ $(findmnt -no PROPAGATION /) == private ]]; then
     log warn "Making root mount shared to use compressed virtual disk and save space"
     $sudo mount --make-rshared /
@@ -208,7 +201,6 @@ prepare() {
     fi
   fi
 
-  # needs to be separate from previous check, since we could have deleted img there
   if [[ ! -f $disk_img ]]; then
     truncate -s 10G "$disk_img"
     mkfs.btrfs "$disk_img" &>> "$log_file"
@@ -232,8 +224,6 @@ ctnr_exec() {
 
 start_container() {
   log info "Starting container to build firmware"
-  # `podman pull` needed to support older podman versions,
-  # which don't have `podman run --pull newer`, like on Debian 11
   podman pull "$PADAVAN_IMAGE" &>> "$log_file"
   podman run --rm -dt -v "$(realpath "$mnt")":/opt --name "$container" "$PADAVAN_IMAGE" &>> "$log_file"
 }
@@ -260,14 +250,11 @@ get_prebuilt_toolchain() {
 
 get_destination_path() {
   local dest="$HOME"
-
   [[ -n $PADAVAN_DEST ]] && dest="$PADAVAN_DEST"
-
   if is_windows; then
     windows_dest="$(powershell.exe "(New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path")"
     dest="$(wslpath "$windows_dest")"
   fi
-
   echo -n "$dest"
 }
 
@@ -330,24 +317,39 @@ get_latest_firmware() {
 
 copy_artifacts() {
   _echo " Copying to $1"
-
   mkdir -p "$1"
-  cp -v "$(get_latest_firmware)" "$1"
-  cp -v "$mnt/$project/trunk/.config" "$1/${CONFIG_FIRMWARE_PRODUCT_ID}_$(date '+%Y.%m.%d_%H.%M.%S').config"
+  latest_fw="$(get_latest_firmware)"
+  if [[ -n "$latest_fw" ]]; then
+    cp -v "$latest_fw" "$1"
+  fi
+  # shellcheck source=/dev/null
+  if [[ -f "$mnt/$project/trunk/.config" ]]; then
+    . <(grep "^CONFIG_" "$mnt/$project/trunk/.config")
+    cfg_name="${CONFIG_FIRMWARE_PRODUCT_ID:-config}_$(date '+%Y.%m.%d_%H.%M.%S').config"
+    cp -v "$mnt/$project/trunk/.config" "$1/$cfg_name"
+  fi
 }
 
 check_firmware_size() {
+  # shellcheck source=/dev/null
+  . <(grep "^CONFIG_" "$mnt/$project/trunk/.config")
+  if [[ -z "${CONFIG_VENDOR:-}" || -z "${CONFIG_FIRMWARE_PRODUCT_ID:-}" ]]; then
+    log warn "CONFIG_VENDOR or CONFIG_FIRMWARE_PRODUCT_ID not set, cannot check firmware size"
+    return
+  fi
   partitions="$mnt/$project/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config"
+  if [[ ! -f "$partitions" ]]; then
+    log warn "Partitions config not found: $partitions"
+    return
+  fi
   max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")"
   fw_size="$(stat -c %s "$(get_latest_firmware)")"
-
   if ((fw_size > max_fw_size)); then
     fw_size_fmtd="$(numfmt --grouping "$fw_size") bytes"
     max_fw_size_fmtd="$(numfmt --grouping "$max_fw_size") bytes"
     log err "Firmware size ($fw_size_fmtd) exceeds max size ($max_fw_size_fmtd) for your target device"
   fi
 }
-
 
 handle_exit() {
   if [[ $? != 0 ]]; then
@@ -382,8 +384,6 @@ handle_exit() {
 }
 
 main() {
-  (( $(id -u) > 0 )) && sudo="sudo" || sudo=""
-
   # shellcheck disable=SC1090
   [[ -f $PADAVAN_BUILDER_CONFIG ]] && . "$PADAVAN_BUILDER_CONFIG"
   log_follow_reminder=" You can follow the log live in another terminal with ${accent} tail -f '$log_file' "
@@ -400,7 +400,6 @@ main() {
 
   if [[ -d $mnt/$project ]]; then
     log warn "Existing source code directory found"
-
     if decide_reset_and_update_sources; then
       log info "Updating"
       reset_and_update_sources &>> "$log_file"
@@ -417,9 +416,8 @@ main() {
   else
     log info "Downloading sources and toolchain"
     ctnr_exec "" git clone --depth 1 -b "$PADAVAN_BRANCH" "$PADAVAN_REPO" &>> "$log_file"
-
-  if [[ $PADAVAN_BUILD_TOOLCHAIN == true ]] \
-  || [[ $PADAVAN_BUILD_ALL_LOCALLY == true ]]; then
+    if [[ $PADAVAN_BUILD_TOOLCHAIN == true ]] \
+    || [[ $PADAVAN_BUILD_ALL_LOCALLY == true ]]; then
       build_toolchain
     else
       get_prebuilt_toolchain &>> "$log_file"
@@ -433,10 +431,8 @@ main() {
     prepare_build_config
   fi
 
-  # get variables from build config
-  # shellcheck disable=SC1090
+  # shellcheck source=/dev/null
   . <(grep "^CONFIG_" "$mnt/$project/trunk/.config")
-
 
   if [[ $PADAVAN_PAUSE_BEFORE_BUILD == true ]]; then
     _echo " Source code is in ${accent} $mnt/$project "
@@ -449,7 +445,6 @@ main() {
 
   log info "All done"
 }
-
 
 trap handle_exit EXIT
 main
