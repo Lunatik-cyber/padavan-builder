@@ -210,7 +210,7 @@ prepare() {
 
   # needs to be separate from previous check, since we could have deleted img there
   if [[ ! -f $disk_img ]]; then
-    truncate -s 50G "$disk_img"
+    truncate -s 10G "$disk_img"
     mkfs.btrfs "$disk_img" &>> "$log_file"
   fi
 
