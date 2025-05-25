@@ -32,7 +32,7 @@ Automated Padavan firmware builder. Runs on almost any modern Linux. Windows can
 ### Usage
 
 ```sh
-wget -qO- https://github.com/shvchk/padavan-builder/raw/main/build.sh | bash
+wget -qO- https://github.com/Lunatik-cyber/padavan-builder/raw/main/build.sh | bash
 ```
 
 > [!WARNING]  
