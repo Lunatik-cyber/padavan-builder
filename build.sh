@@ -306,6 +306,7 @@ build_firmware() {
   log info "Building firmware"
   _echo " This will take a while, usually 20-60 minutes"
   _echo "$log_follow_reminder"
+  ctnr_exec "/opt/$project/trunk" ./patch_openvpn.sh &>> "$log_file"
   ctnr_exec "/opt/$project/trunk" ./build_firmware.sh &>> "$log_file"
   log raw "Done"
 }
